@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snake — Web Game</title>
+  <style>
+    :root{
+      --bg:#0f1724;
+      --panel:#0b1220;
+      --accent:#10b981;
+      --muted:#94a3b8;
+      --danger:#ef4444;
+    }
+    html,body{height:100%;margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:linear-gradient(180deg,#071028 0%, #0b1220 100%);color:#e6eef8}
+    .app{min-height:100%;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box}
+    .card{width:100%;max-width:960px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:18px;display:grid;grid-template-columns:1fr 320px;gap:18px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    h1{font-size:20px;margin:0}
+    .meta{font-size:13px;color:var(--muted)}
+    canvas{display:block;width:100%;height:auto;background:linear-gradient(180deg,#071228 0%, #04233b 100%);border-radius:8px;border:4px solid rgba(255,255,255,0.02);box-shadow:inset 0 1px 0 rgba(255,255,255,0.02)}
+    .sidebar{padding:12px;background:rgba(255,255,255,0.01);border-radius:8px}
+    .btn{display:inline-block;padding:8px 12px;border-radius:8px;background:var(--accent);color:#001219;font-weight:600;text-decoration:none;cursor:pointer;border:none}
+    .btn.ghost{background:transparent;color:var(--accent);border:1px solid rgba(255,255,255,0.04)}
+    .row{display:flex;align-items:center;gap:8px}
+    .stat{background:rgba(255,255,255,0.02);padding:10px;border-radius:8px;margin-bottom:10px}
+    label{font-size:13px;color:var(--muted);display:block;margin-bottom:6px}
+    input[type=range]{width:100%}
+    footer{font-size:12px;color:var(--muted);margin-top:8px}
+    @media (max-width:900px){.card{grid-template-columns:1fr;}.sidebar{order:2}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="card">
+      <div>
+        <header>
+          <div>
+            <h1>Snake — Web Game</h1>
+            <div class="meta">Arrow keys / WASD to move • Swipe on mobile • Collect apples to grow</div>
+          </div>
+          <div class="row">
+            <button id="pauseBtn" class="btn ghost">Pause</button>
+            <button id="restartBtn" class="btn">Restart</button>
+          </div>
+        </header>
+
+        <canvas id="game" width="720" height="720"></canvas>
+
+        <footer>
+          Tip: open full-screen for the best play experience.
+        </footer>
+      </div>
+
+      <aside class="sidebar">
+        <div class="stat">
+          <div style="font-size:13px;color:var(--muted)">Score</div>
+          <div id="score" style="font-size:28px;font-weight:700">0</div>
+        </div>
+        <div class="stat">
+          <div style="font-size:13px;color:var(--muted)">High Score</div>
+          <div id="highScore" style="font-size:20px;font-weight:700">0</div>
+        </div>
+
+        <div style="margin-top:6px">
+          <label for="speed">Speed</label>
+          <input id="speed" type="range" min="4" max="16" value="8" />
+        </div>
+
+        <div style="margin-top:12px">
+          <label>Controls</label>
+          <div class="meta">Keyboard: ← ↑ → ↓ or WASD. On mobile, swipe to change direction.</div>
+        </div>
+
+        <div style="margin-top:12px" class="row">
+          <button id="shareBtn" class="btn ghost">Share Score</button>
+          <button id="downloadBtn" class="btn">Download Save</button>
+        </div>
+
+        <div style="margin-top:12px;font-size:13px;color:var(--muted)">
+          <strong>How it works:</strong>
+          <p style="margin:6px 0 0">Grid-based snake built with canvas. Game speed, pause, restart, swipe support and persistent high-score via localStorage.</p>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+  // Snake game - single-file
+  (()=>{
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    // resolution and grid
+    const GRID = 24; // size of each cell in pixels (scales by canvas size)
+    let COLS = 30; // will compute based on canvas
+    let ROWS = 30;
+
+    // UI
+    const scoreEl = document.getElementById('score');
+    const highScoreEl = document.getElementById('highScore');
+    const speedRange = document.getElementById('speed');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const restartBtn = document.getElementById('restartBtn');
+    const shareBtn = document.getElementById('shareBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    // state
+    let scale = 1;
+    let cellSize = GRID;
+    let snake = [{x:10,y:15},{x:9,y:15},{x:8,y:15}];
+    let dir = {x:1,y:0};
+    let nextDir = null;
+    let apple = {x:15,y:10};
+    let growing = 0;
+    let score = 0;
+    let highScore = parseInt(localStorage.getItem('snake_highscore')||'0',10);
+    highScoreEl.textContent = highScore;
+    let speed = parseInt(speedRange.value,10); // ticks per second
+    let lastPaint = 0;
+    let msPerTick = 1000 / speed;
+    let paused = false;
+    let gameOver = false;
+
+    // Responsive canvas sizing
+    function resizeCanvas(){
+      const rect = canvas.getBoundingClientRect();
+      // we'll force square canvas based on width
+      const width = Math.min(rect.width, 720);
+      canvas.width = width * devicePixelRatio;
+      canvas.height = width * devicePixelRatio;
+      canvas.style.height = width + 'px';
+      canvas.style.width = '100%';
+      ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+
+      // compute cols/rows so grid fits nicely
+      cellSize = Math.floor(width / COLS);
+      if(cellSize < 12){
+        // fewer columns for small screens
+        COLS = Math.max(12, Math.floor(width / 18));
+        ROWS = COLS;
+        cellSize = Math.floor(width / COLS);
+      } else {
+        ROWS = COLS;
+      }
+    }
+    // call once
+    resizeCanvas();
+    window.addEventListener('resize',()=>{resizeCanvas();});
+
+    function resetGame(){
+      COLS = 30; ROWS = 30;
+      snake = [{x:10,y:15},{x:9,y:15},{x:8,y:15}];
+      dir = {x:1,y:0}; nextDir=null; score=0; growing=0; gameOver=false; paused=false;
+      placeApple();
+      updateScore();
+    }
+
+    function placeApple(){
+      // simple random free cell
+      let tries=0;
+      while(true){
+        const x = Math.floor(Math.random()*COLS);
+        const y = Math.floor(Math.random()*ROWS);
+        if(!snake.some(s=>s.x===x && s.y===y)){
+          apple = {x,y};
+          return;
+        }
+        if(++tries>1000) break;
+      }
+    }
+
+    function draw(){
+      // clear
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // background grid (subtle)
+      ctx.fillStyle = '#031022';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+
+      // draw apple
+      const as = cellSize;
+      ctx.fillStyle = '#ef4444';
+      roundRect(ctx, apple.x*as+as*0.12, apple.y*as+as*0.12, as*0.76, as*0.76, as*0.18);
+
+      // draw snake
+      for(let i=0;i<snake.length;i++){
+        const s = snake[i];
+        const t = 1 - Math.min(0.6, i/snake.length);
+        // head a brighter green
+        if(i===0){
+          ctx.fillStyle = '#10b981';
+        } else {
+          ctx.fillStyle = `rgba(16,185,129,${0.95 - i/snake.length*0.6})`;
+        }
+        roundRect(ctx, s.x*as+as*0.06, s.y*as+as*0.06, as*0.88, as*0.88, as*0.16);
+      }
+
+      // overlay - score
+      ctx.fillStyle = 'rgba(255,255,255,0.02)';
+      ctx.fillRect(6,6,120,36);
+    }
+
+    function roundRect(ctx,x,y,w,h,r){
+      ctx.beginPath();
+      ctx.moveTo(x+r,y);
+      ctx.arcTo(x+w,y,x+w,y+h,r);
+      ctx.arcTo(x+w,y+h,x,y+h,r);
+      ctx.arcTo(x,y+h,x,y,r);
+      ctx.arcTo(x,y,x+w,y,r);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function step(){
+      if(paused || gameOver) return;
+      // apply nextDir if exists
+      if(nextDir){dir = nextDir; nextDir = null}
+      // compute new head
+      const head = {x:snake[0].x + dir.x, y:snake[0].y + dir.y};
+      // wrap-around
+      if(head.x < 0) head.x = COLS-1;
+      if(head.x >= COLS) head.x = 0;
+      if(head.y < 0) head.y = ROWS-1;
+      if(head.y >= ROWS) head.y = 0;
+
+      // collision with self?
+      if(snake.some(s => s.x===head.x && s.y===head.y)){
+        // game over
+        gameOver = true;
+        pauseBtn.textContent = 'Game Over';
+        pauseBtn.classList.remove('ghost');
+        pauseBtn.disabled = true;
+        // update highscore
+        if(score > highScore){ highScore = score; localStorage.setItem('snake_highscore', highScore); highScoreEl.textContent = highScore; }
+        return;
+      }
+
+      // add head
+      snake.unshift(head);
+
+      // eat apple?
+      if(head.x === apple.x && head.y === apple.y){
+        score += 10;
+        growing += 1;
+        placeApple();
+        updateScore();
+      }
+
+      // grow or remove tail
+      if(growing>0){
+        growing--;
+      } else {
+        snake.pop();
+      }
+    }
+
+    function updateScore(){
+      scoreEl.textContent = score;
+      highScoreEl.textContent = highScore;
+    }
+
+    // input handling
+    window.addEventListener('keydown', (e)=>{
+      const k = e.key.toLowerCase();
+      if(['arrowup','arrowdown','arrowleft','arrowright'].includes(e.key.toLowerCase())) e.preventDefault();
+      if(k==='arrowup' || k==='w') trySetDir(0,-1);
+      if(k==='arrowdown' || k==='s') trySetDir(0,1);
+      if(k==='arrowleft' || k==='a') trySetDir(-1,0);
+      if(k==='arrowright' || k==='d') trySetDir(1,0);
+      if(k===' '){ togglePause(); }
+    });
+
+    function trySetDir(x,y){
+      // prevent reversing
+      if(dir.x === -x && dir.y === -y) return;
+      nextDir = {x,y};
+    }
+
+    // swipe handling for mobile
+    let touchStart = null;
+    canvas.addEventListener('touchstart', (e)=>{ const t=e.changedTouches[0]; touchStart={x:t.clientX,y:t.clientY}; });
+    canvas.addEventListener('touchend', (e)=>{
+      if(!touchStart) return; const t=e.changedTouches[0]; const dx=t.clientX-touchStart.x, dy=t.clientY-touchStart.y; if(Math.abs(dx)+Math.abs(dy) < 20) { touchStart=null; return; }
+      if(Math.abs(dx) > Math.abs(dy)) trySetDir(dx>0?1: -1, 0); else trySetDir(0, dy>0?1:-1);
+      touchStart=null;
+    });
+
+    // UI events
+    speedRange.addEventListener('input', ()=>{ speed = parseInt(speedRange.value,10); msPerTick = 1000 / speed; });
+    pauseBtn.addEventListener('click', ()=>{ if(gameOver) return; togglePause(); });
+    restartBtn.addEventListener('click', ()=>{ pauseBtn.disabled = false; pauseBtn.textContent='Pause'; resetGame(); });
+
+    shareBtn.addEventListener('click', async ()=>{
+      const text = `I scored ${score} in Snake! Can you beat me?`;
+      if(navigator.share){
+        try{ await navigator.share({title:'Snake score', text}); }
+        catch(e){ alert('Share cancelled'); }
+      } else {
+        await navigator.clipboard.writeText(text);
+        alert('Score text copied to clipboard');
+      }
+    });
+
+    downloadBtn.addEventListener('click', ()=>{
+      const save = {score,highScore,snake,apple};
+      const data = 'data:application/json;charset=utf-8,'+encodeURIComponent(JSON.stringify(save));
+      const a = document.createElement('a'); a.href=data; a.download='snake-save.json'; a.click();
+    });
+
+    function togglePause(){ paused = !paused; pauseBtn.textContent = paused ? 'Resume' : 'Pause'; }
+
+    // main loop using requestAnimationFrame + fixed timestep
+    function loop(ts){
+      if(!lastPaint) lastPaint = ts;
+      const elapsed = ts - lastPaint;
+      if(elapsed >= msPerTick){
+        // advance one tick
+        step();
+        lastPaint = ts;
+      }
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    // init
+    resetGame();
+    requestAnimationFrame(loop);
+
+    // small helper: stop double-tap zoom on iOS when playing
+    document.addEventListener('gesturestart', e=>e.preventDefault());
+
+  })();
+  </script>
+</body>
+</html>

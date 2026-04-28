@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Equalizer</title>
+
+  <style>
+    body {
+      margin: 0;
+      background: #0e1116;
+      color: #e6edf3;
+      font-family: system-ui, sans-serif;
+    }
+
+    /* ===== SYSTEM ONLINE ===== */
+    #system-status {
+      position: fixed;
+      top: 16px;
+      right: 20px;
+      display: flex;
+      gap: 10px;
+      padding: 8px 14px;
+      background: rgba(20,30,20,.6);
+      border: 1px solid rgba(0,255,120,.4);
+      border-radius: 20px;
+      font-family: monospace;
+      color: #7cffb2;
+      z-index: 9999;
+    }
+
+    .led {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #00ff88;
+      box-shadow: 0 0 8px #00ff88;
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse { 50% { opacity: .4; } }
+
+    /* ===== LAYOUT ===== */
+    .app {
+      display: grid;
+      grid-template-columns: 1fr 260px;
+      height: 100vh;
+    }
+
+    .main {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    canvas {
+      flex: 1;
+      background: #0b0f14;
+      border-radius: 12px;
+    }
+
+    .player {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    /* ===== RIGHT COLUMN ===== */
+    .controls {
+      background: #161b22;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 30px;
+      padding: 30px 0;
+    }
+
+    .control {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    input[type=range] {
+      writing-mode: bt-lr;
+      -webkit-appearance: slider-vertical;
+      height: 220px;
+    }
+
+    label {
+      font-size: 13px;
+      letter-spacing: 1px;
+      opacity: 0.9;
+    }
+
+    button {
+      background: #1f6feb;
+      border: none;
+      color: white;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="system-status">
+  <span class="led"></span>
+  SYSTEM ONLINE
+</div>
+
+<div class="app">
+
+  <!-- MAIN -->
+  <div class="main">
+    <canvas id="visualizer"></canvas>
+
+    <div class="player">
+      <input type="file" id="file" accept="audio/*">
+      <button id="play">Play</button>
+      <button id="pause">Pause</button>
+    </div>
+
+    <audio id="audio"></audio>
+  </div>
+
+  <!-- STACKED EQ -->
+  <div class="controls">
+    <div class="control">
+      <input id="bass" type="range" min="-15" max="15" step="0.1" value="0">
+      <label>BASS</label>
+    </div>
+
+    <div class="control">
+      <input id="treble" type="range" min="-15" max="15" step="0.1" value="0">
+      <label>TREBLE</label>
+    </div>
+
+    <div class="control">
+      <input id="mid" type="range" min="-15" max="15" step="0.1" value="0">
+      <label>MID</label>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const audio = document.getElementById("audio");
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioContext();
+
+  const source = ctx.createMediaElementSource(audio);
+
+  const bass = ctx.createBiquadFilter();
+  bass.type = "lowshelf";
+  bass.frequency.value = 120;
+
+  const mid = ctx.createBiquadFilter();
+  mid.type = "peaking";
+  mid.frequency.value = 1000;
+  mid.Q.value = 1;
+
+  const treble = ctx.createBiquadFilter();
+  treble.type = "highshelf";
+  treble.frequency.value = 4000;
+
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.85;
+
+  source
+    .connect(bass)
+    .connect(mid)
+    .connect(treble)
+    .connect(analyser)
+    .connect(ctx.destination);
+
+  document.getElementById("bass").oninput = e => bass.gain.value = e.target.value;
+  document.getElementById("mid").oninput = e => mid.gain.value = e.target.value;
+  document.getElementById("treble").oninput = e => treble.gain.value = e.target.value;
+
+  document.getElementById("file").onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    audio.src = URL.createObjectURL(file);
+    audio.load();
+  };
+
+  document.getElementById("play").onclick = async () => {
+    if (ctx.state === "suspended") await ctx.resume();
+    audio.play();
+  };
+
+  document.getElementById("pause").onclick = () => audio.pause();
+
+  const canvas = document.getElementById("visualizer");
+  const c = canvas.getContext("2d");
+
+  function resize() {
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+  }
+  window.onresize = resize;
+  resize();
+
+  function draw() {
+  requestAnimationFrame(draw);
+
+  const bufferLength = analyser.fftSize;
+  const data = new Uint8Array(bufferLength);
+  analyser.getByteTimeDomainData(data);
+
+  c.clearRect(0, 0, canvas.width, canvas.height);
+
+  c.lineWidth = 2;
+  c.strokeStyle = "#00ffcc";
+  c.beginPath();
+
+  const sliceWidth = canvas.width / bufferLength;
+  let x = 0;
+
+  for (let i = 0; i < bufferLength; i++) {
+    const v = data[i] / 128.0;     // normalize
+    const y = (v * canvas.height) / 2;
+
+    if (i === 0) {
+      c.moveTo(x, y);
+    } else {
+      c.lineTo(x, y);
+    }
+
+    x += sliceWidth;
+  }
+
+  c.lineTo(canvas.width, canvas.height / 2);
+  c.stroke();
+}
+
+
+  draw();
+</script>
+
+</body>
+</html>
